@@ -1,7 +1,8 @@
+use clap::{App, Arg, ArgMatches};
 use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64;
 use terminal_size::{Height, Width, terminal_size};
-use std::{io::{Write, stdin, stdout}, mem};
+use std::{io::{Write, stdin, stdout}, mem, str::FromStr, time::Instant};
 use console::Term;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -21,7 +22,8 @@ enum Square {
     Mine,
     Num(i16),
     Nothing,
-    Revealed
+    Revealed,
+    Marked
 }
 
 #[derive(Debug, Clone)]
@@ -29,7 +31,9 @@ struct Field {
     pub seed: u64,
     squares: Vec<Square>,
     shown_squares: Vec<Square>,
-    size: Size
+    size: Size,
+    time: Instant,
+    mines: i32
 }
 
 fn replace<T>(vec: &mut Vec<T>, i: usize, e: T) -> T {
@@ -47,8 +51,8 @@ fn string_repeat(s: &str, times: i32) -> String {
 
 impl Field {
     pub fn new(size: Size, mines: i32, seed: u64) -> Self { // supply 0 for a random seed
-        let mut field = Field { squares: Vec::new(), shown_squares: Vec::new(), size, seed };
-        field.init(mines);
+        let mut field = Field { squares: Vec::new(), shown_squares: Vec::new(), size, seed, mines, time: Instant::now() };
+        field.init();
         field
     }
     
@@ -56,7 +60,7 @@ impl Field {
         (pos.x * self.size.size_x + pos.y) as usize 
     }
 
-    fn init(&mut self, mines: i32) {
+    fn init(&mut self) {
         let field_size = self.size.size_x * self.size.size_y;
     
         for _ in 0..field_size {
@@ -70,7 +74,7 @@ impl Field {
             i => Pcg64::seed_from_u64(i)
         };
         
-        for _ in 0..mines {
+        for _ in 0..self.mines {
             let mut new_mine_pos: Position = Position { x: rng.gen_range(0..self.size.size_x), y: rng.gen_range(0..self.size.size_y) };
             
             let mut new_mine_index = self.pos_to_index(new_mine_pos); 
@@ -82,6 +86,8 @@ impl Field {
             replace(&mut self.squares, new_mine_index, Square::Mine);
             self.generate_numbers_around_mine(new_mine_pos);
         }
+        
+
     }
 
     fn is_out_of_bounds(&self, pos: Position) -> bool {
@@ -111,7 +117,7 @@ impl Field {
         }
     }
 
-    pub fn reveal_on_pos(&mut self, pos: Position, searched_positions: &mut Vec<usize>) -> bool { // if return value is true, the player lost
+    pub fn reveal_on_pos(&mut self, pos: Position, searched_positions: &mut Vec<usize>) -> bool { // if the return value is true, the player lost
         let index = self.pos_to_index(pos);
         
         let reveal = self.squares[index];
@@ -138,11 +144,81 @@ impl Field {
                 }
             },
             Square::Num(_) => self.shown_squares[index] = reveal,
-            Square::Mine => return true,
+            Square::Mine => {
+                self.shown_squares[index] = reveal;
+                return true;
+            },
             _ => ()
         };
 
         return false;
+    }
+
+    pub fn player_won(&self) -> bool {
+        if self.count_marked() != self.mines {
+            return false;
+        } 
+
+        for x in 0..self.size.size_x {
+            for y in 0..self.size.size_y {
+                let current_pos = Position { x, y };
+                let current_index = self.pos_to_index(current_pos);
+
+                let current_shown_square = self.shown_squares[current_index];
+                if current_shown_square != Square::Marked {
+                    continue;
+                }
+
+                let current_square = self.squares[current_index];
+                if current_square != Square::Mine {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
+    fn count_marked(&self) -> i32 {
+        let mut counter = 0;
+        for square in self.shown_squares.iter() {
+            if square == &Square::Marked {
+                counter += 1;
+            }
+        }
+
+        counter
+    }
+    
+    pub fn status_bar(&self) -> String {
+        let mut output = String::new();
+        
+        output += &self.count_marked().to_string();
+        output += "/";
+        output += &self.mines.to_string();
+
+        output += " ";
+        output += &self.time.elapsed().as_secs().to_string();
+
+        output
+    }
+
+    pub fn toggle_mark(&mut self, pos: Position) {
+        let index = self.pos_to_index(pos);
+        match self.shown_squares[index] {
+            Square::Marked => self.shown_squares[index] = Square::Nothing,
+            Square::Nothing => self.shown_squares[index] = Square::Marked,
+            _ => ()
+        };
+    }
+
+    pub fn help(&self) -> String {
+        let mut output = String::new();
+        output += "reveal a field - R X Y\nexample: R 1 1\n\n";
+        output += "mark a field as a mine - M X Y\nexample: M 1 1\n\n";
+        output += "help - show this help text";
+
+        output
     }
 
     pub fn draw(&self) -> String {
@@ -161,7 +237,8 @@ impl Field {
                     Square::Nothing => output += "- ",
                     Square::Num(i) => output += &format!("{} ", i),
                     Square::Mine => output += "M ",
-                    Square::Revealed => output += "  "
+                    Square::Revealed => output += "  ",
+                    Square::Marked => output += "F "
                 };
             }
             output += "|\n";
@@ -171,36 +248,20 @@ impl Field {
 
         output
     }
-
-    pub fn draw_ignore_visibility(&self) -> String {
-        let mut output = String::new();
-        
-        for x in 0..self.size.size_x {
-            for y in 0..self.size.size_y {
-                let current_pos = self.pos_to_index(Position { x, y });
-                let current_square = self.squares[current_pos];
-                
-                match current_square {
-                    Square::Nothing => output += "- ",
-                    Square::Num(i) => output += &format!("{} ", i),
-                    Square::Mine => output += "M ",
-                    Square::Revealed => ()
-                };
-            }
-            output += "\n";
-        }
-
-        output
-    }
 }
 
-fn print_to_center(s: String) {
+fn print_to_center(s: String, horizontal: bool, vertical: bool) {
     let (Width(width), Height(height)) = terminal_size().expect("Couldn't get terminal size");
     let lines = s.split("\n");
 
-    if !(s.split("\n").count() > height as usize) {
+    if vertical && !(s.split("\n").count() > height as usize) {
         let padding_top = (height - s.split("\n").count() as u16) / 2;
         println!("{}", string_repeat("\n", padding_top.into()));    
+    }
+
+    if !horizontal {
+        println!("{}", s);
+        return;
     }
 
     for line in lines {
@@ -211,17 +272,16 @@ fn print_to_center(s: String) {
         
         println!("{}{}", string_repeat(" ", padding_left as i32), line);
     }
-    
-
 }
 
 fn clear_screen(term: &Term) {
     term.clear_screen().expect("Failed to clear screen");
 }
 
-fn input() -> String {
+fn input(prompt: &str) -> String {
     let mut input = String::new();
-
+    
+    print!("{}", prompt);
     stdout().flush().expect("Failed to flush stdout!");
 
     stdin().read_line(&mut input).expect("Incorrect string!");
@@ -236,28 +296,167 @@ fn input() -> String {
     input
 }
 
+fn get_field<T: FromStr>(matches: &ArgMatches, name: &str, default: T) -> T {
+    match matches.value_of(name) {
+        None => {
+            default
+        },
+        Some(v) => {
+            match v.parse() {
+                Ok(l) => l,
+                Err(_) => {
+                    default
+                }
+            }
+        }
+    }
+}
+
 fn main() {
+    let matches = App::new("Minesweeper")
+                                    .arg(Arg::with_name("field_height")
+                                            .short("h")
+                                            .long("height")
+                                            .help("Height of the field")
+                                            .takes_value(true))
+                                    .arg(Arg::with_name("field_width")
+                                            .short("w")
+                                            .long("width")
+                                            .help("Width of the field")
+                                            .takes_value(true))
+                                    .arg(Arg::with_name("mines")
+                                            .short("m")
+                                            .long("mines")
+                                            .help("Number of mines")
+                                            .takes_value(true))
+                                    .arg(Arg::with_name("seed")
+                                            .short("s")
+                                            .long("seed")
+                                            .help("Seed for mine generation")
+                                            .takes_value(true))
+                                    .get_matches();
+    let height = get_field(&matches, "height", 10);
+    let width = get_field(&matches, "width", 10);
+    let size = Size { size_x: width, size_y: height };
+
+    let mines = get_field(&matches, "mines", 10);
+    
+    let seed: u64 = matches.value_of("seed").unwrap_or("1")
+                .parse().unwrap();
+    
+    let mut field = Field::new(size, mines, seed);
+
     let term = Term::stdout();
+    
     clear_screen(&term);
+    let mut drawn_field = field.status_bar() + "\n";
+    drawn_field += &(field.draw() + "\n");
+    drawn_field += "Type help to display the help menu!";
 
-    term.set_title("Minesweeper");
-    print!("Enter field size (x-y): ");
+    print_to_center(drawn_field, true, true);
+    let mut action = input(">");
+    while !field.player_won() {
+        if action.to_ascii_lowercase().contains("r") || action.to_ascii_lowercase().contains("reveal") {
+            let coords: Vec<&str> = action.split(" ").collect();
+            let x = match coords[1].parse::<i32>() {
+                Err(_) => { 
+                    println!("{} is not a correct position", coords[1]);
+                    action = input(">");
+                    continue;
+                },
+                Ok(x) => {
+                    if x > field.size.size_x || x <= 0 {
+                        println!("X can only be from 1 to {}", field.size.size_x);
+                        action = input(">");
+                        continue;
+                    }
+                    x - 1
+                }
+            };
 
-    let size = input();
-    let size: Vec<&str> = size.split("-").collect();
-    let size = Size {
-        size_x: size[0].parse().expect("Bad height"), 
-        size_y: size[1].parse().expect("Bad width") 
-    };
+            let y = match coords[2].parse::<i32>() {
+                Err(_) => { 
+                    println!("{} is not a correct position", coords[1]);
+                    action = input(">");
+                    continue;
+                },
+                Ok(y) => {
+                    if y > field.size.size_y || y <= 0 {
+                        println!("Y can only be from 1 to {}", field.size.size_y);
+                        action = input(">");
+                        continue;
+                    }
+                    y - 1
+                }
+            };
 
-    print!("Enter amount of mines: ");
-    let mines: i32 = input().parse().expect("Bad number of mines");
+            let pos_to_reveal = Position { x, y };
+            
+            let player_lost = field.reveal_on_pos(pos_to_reveal, &mut Vec::new());
+            if player_lost {
+                clear_screen(&term);
+                let mut drawn_field = field.status_bar() + "\n";
+                drawn_field += &(field.draw() + "\n");
+                drawn_field += "BOOM! You've lost!";
+                print_to_center(drawn_field, true, true);
+                break;
+            }
+        }
+        else if action.to_ascii_lowercase().contains("m") || action.to_ascii_lowercase().contains("mark") {
+            let coords: Vec<&str> = action.split(" ").collect();
+            let x = match coords[1].parse::<i32>() {
+                Err(_) => { 
+                    println!("{} is not a correct position", coords[1]);
+                    action = input(">");
+                    continue;
+                },
+                Ok(x) => {
+                    if x > field.size.size_x || x <= 0 {
+                        println!("X can only be from 1 to {}", field.size.size_x);
+                        action = input(">");
+                        continue;
+                    }
+                    x - 1
+                }
+            };
 
-    let mut field = Field::new(size, mines, 1);
-    
-    
+            let y = match coords[2].parse::<i32>() {
+                Err(_) => { 
+                    println!("{} is not a correct position", coords[1]);
+                    action = input(">");
+                    continue;
+                },
+                Ok(y) => {
+                    if y > field.size.size_y || y <= 0 {
+                        println!("Y can only be from 1 to {}", field.size.size_y);
+                        action = input(">");
+                        continue;
+                    }
+                    y - 1
+                }
+            };
 
-    print_to_center(field.draw());
-    
-    
+            let pos_to_mark = Position { x, y };
+            
+            field.toggle_mark(pos_to_mark);
+        }
+        else if action.to_ascii_lowercase() == "help" {
+            clear_screen(&term);
+            let mut drawn_field = field.status_bar() + "\n";
+            drawn_field += &(field.draw() + "\n");
+            drawn_field += &field.help();
+            print_to_center(drawn_field, true, true);
+            
+            action = input(">");
+            continue;
+        }
+        clear_screen(&term);
+        let mut drawn_field = field.status_bar() + "\n";
+        drawn_field += &(field.draw() + "\n");
+
+        print_to_center(drawn_field, true, true);
+        
+        action = input(">");
+
+    }
 }
