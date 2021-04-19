@@ -6,7 +6,7 @@ use terminal_size::{Height, Width, terminal_size};
 #[cfg(unix)]
 use os::unix::prelude::AsRawFd;
 
-use std::{io::{Write, stdin, stdout}, mem, str::FromStr, time::{Instant}};
+use std::{mem, str::FromStr, time::{Instant}};
 use console::Term;
 use device_query::{DeviceState, Keycode};
 
