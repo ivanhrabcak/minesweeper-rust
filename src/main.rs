@@ -2,9 +2,13 @@ use clap::{App, Arg, ArgMatches};
 use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64;
 use terminal_size::{Height, Width, terminal_size};
-use std::{io::{Write, stdin, stdout}, mem, os::unix::prelude::AsRawFd, process::Command, str::FromStr, thread::sleep, time::{Duration, Instant}};
+
+#[cfg(unix)]
+use os::unix::prelude::AsRawFd;
+
+use std::{io::{Write, stdin, stdout}, mem, str::FromStr, time::{Instant}};
 use console::Term;
-use device_query::{DeviceQuery, DeviceState, Keycode};
+use device_query::{DeviceState, Keycode};
 
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -214,15 +218,6 @@ impl Field {
         };
     }
 
-    pub fn help(&self) -> String {
-        let mut output = String::new();
-        output += "reveal a field - R X Y\nexample: R 1 1\n\n";
-        output += "mark a field as a mine - M X Y\nexample: M 1 1\n\n";
-        output += "help - show this help text";
-
-        output
-    }
-
     pub fn draw(&self, position_on_field: Position) -> String {
         let mut output = string_repeat("==", self.size.size_y + 1) + "=\n";
 
@@ -366,12 +361,14 @@ fn main() {
 
     let mines = get_field(&matches, "mines", 10);
     
-    let seed: u64 = matches.value_of("seed").unwrap_or("1")
+    let seed: u64 = matches.value_of("seed").unwrap_or("0")
                 .parse().unwrap();
     
     let mut field = Field::new(size, mines, seed);
     
     let term = Term::stdout();
+    
+    #[cfg(unix)]
     term.as_raw_fd();
 
     let mut start = Instant::now();
@@ -466,5 +463,15 @@ fn main() {
 
             start = Instant::now();
         }
+    }
+
+    if field.player_won() {
+        clear_screen(&term);
+
+        let mut drawn_field = field.status_bar() + "\n";
+        drawn_field += &(field.draw(current_position) + "\n");
+        drawn_field += "You win!";
+        
+        print_to_center(drawn_field, true, true);
     }
 }
