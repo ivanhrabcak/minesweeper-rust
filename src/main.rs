@@ -3,10 +3,7 @@ use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64;
 use terminal_size::{Height, Width, terminal_size};
 
-#[cfg(unix)]
-use os::unix::prelude::AsRawFd;
-
-use std::{mem, str::FromStr, time::{Instant}};
+use std::{mem, process::Command, str::FromStr, time::{Instant}};
 use console::Term;
 use device_query::{DeviceState, Keycode};
 
@@ -351,7 +348,12 @@ fn main() {
     let term = Term::stdout();
     
     #[cfg(unix)]
-    term.as_raw_fd();
+    match Command::new("stty")
+        .arg("-echo")
+        .spawn() {
+        Ok(_) => (),
+        Err(_) => ()
+    };
 
     let mut start = Instant::now();
     let device_state = DeviceState::new();
