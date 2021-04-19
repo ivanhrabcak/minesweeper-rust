@@ -305,7 +305,7 @@ fn draw(term: &Term, field: &Field, show_hint: bool, current_position: Position)
     drawn_field += &(field.draw(current_position) + "\n");
 
     if show_hint {
-        drawn_field += "Use the arrow keys to move around the field, SPACE to reveal an M to mark.";
+        drawn_field += "Use the arrow keys to move around the field, SPACE to reveal and M to mark.";
     }
     
     print_to_center(drawn_field, true, true);
