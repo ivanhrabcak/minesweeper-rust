@@ -285,24 +285,6 @@ fn clear_screen(term: &Term) {
     term.clear_screen().expect("Failed to clear screen");
 }
 
-fn input(prompt: &str) -> String {
-    let mut input = String::new();
-    
-    print!("{}", prompt);
-    stdout().flush().expect("Failed to flush stdout!");
-
-    stdin().read_line(&mut input).expect("Incorrect string!");
- 
-    if let Some('\n') = input.chars().next_back() {
-        input.pop();
-    }
-    if let Some('\r') = input.chars().next_back() {
-        input.pop();
-    }
-
-    input
-}
-
 fn get_field<T: FromStr>(matches: &ArgMatches, name: &str, default: T) -> T {
     match matches.value_of(name) {
         None => {
