@@ -2,8 +2,10 @@ use clap::{App, Arg, ArgMatches};
 use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64;
 use terminal_size::{Height, Width, terminal_size};
-use std::{io::{Write, stdin, stdout}, mem, str::FromStr, time::Instant};
+use std::{io::{Write, stdin, stdout}, mem, os::unix::prelude::AsRawFd, process::Command, str::FromStr, thread::sleep, time::{Duration, Instant}};
 use console::Term;
+use device_query::{DeviceQuery, DeviceState, Keycode};
+
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Position {
@@ -221,9 +223,9 @@ impl Field {
         output
     }
 
-    pub fn draw(&self) -> String {
+    pub fn draw(&self, position_on_field: Position) -> String {
         let mut output = string_repeat("==", self.size.size_y + 1) + "=\n";
-        
+
         for x in 0..self.size.size_x {
             output += "|";
             for y in 0..self.size.size_y {
@@ -233,13 +235,23 @@ impl Field {
                     output += " ";
                 }
 
+                if (Position { x, y }) == position_on_field {
+                    output.pop();
+                    output += "["
+                }
+
                 match current_square {
                     Square::Nothing => output += "- ",
                     Square::Num(i) => output += &format!("{} ", i),
                     Square::Mine => output += "M ",
                     Square::Revealed => output += "  ",
-                    Square::Marked => output += "F "
-                };
+                    Square::Marked => output += "* "
+                }
+                
+                if (Position { x, y }) == position_on_field {
+                    output.pop();
+                    output += "]";
+                }
             }
             output += "|\n";
         }
@@ -312,6 +324,19 @@ fn get_field<T: FromStr>(matches: &ArgMatches, name: &str, default: T) -> T {
     }
 }
 
+fn draw(term: &Term, field: &Field, show_hint: bool, current_position: Position) {
+    clear_screen(term);
+
+    let mut drawn_field = field.status_bar() + "\n";
+    drawn_field += &(field.draw(current_position) + "\n");
+
+    if show_hint {
+        drawn_field += "Use the arrow keys to move around the field, SPACE to reveal an M to mark.";
+    }
+    
+    print_to_center(drawn_field, true, true);
+}
+
 fn main() {
     let matches = App::new("Minesweeper")
                                     .arg(Arg::with_name("field_height")
@@ -345,118 +370,101 @@ fn main() {
                 .parse().unwrap();
     
     let mut field = Field::new(size, mines, seed);
-
-    let term = Term::stdout();
     
+    let term = Term::stdout();
+    term.as_raw_fd();
+
+    let mut start = Instant::now();
+    let device_state = DeviceState::new();
+
+    let mut show_hint = true;
+
     clear_screen(&term);
+    
+    let mut current_position = Position { x: field.size.size_x / 2, y: field.size.size_y / 2 };
     let mut drawn_field = field.status_bar() + "\n";
-    drawn_field += &(field.draw() + "\n");
-    drawn_field += "Type help to display the help menu!";
+    drawn_field += &(field.draw(current_position) + "\n");
+    drawn_field += "Use the arrow keys to move around the field, SPACE to reveal an M to mark.";
 
+    
     print_to_center(drawn_field, true, true);
-    let mut action = input(">");
+    
+    
+    let mut keys_held_previous_iteration: Vec<Keycode> = Vec::new();
     while !field.player_won() {
-        if action.to_ascii_lowercase().contains("r") || action.to_ascii_lowercase().contains("reveal") {
-            let coords: Vec<&str> = action.split(" ").collect();
-            let x = match coords[1].parse::<i32>() {
-                Err(_) => { 
-                    println!("{} is not a correct position", coords[1]);
-                    action = input(">");
-                    continue;
-                },
-                Ok(x) => {
-                    if x > field.size.size_x || x <= 0 {
-                        println!("X can only be from 1 to {}", field.size.size_x);
-                        action = input(">");
-                        continue;
-                    }
-                    x - 1
-                }
-            };
+        let keys: Vec<Keycode> = device_state.query_keymap();
+        let pressed_keys: Vec<Keycode> = keys.clone().into_iter().filter(|x| !keys_held_previous_iteration.contains(x)).collect();
+        keys_held_previous_iteration = keys.clone();
 
-            let y = match coords[2].parse::<i32>() {
-                Err(_) => { 
-                    println!("{} is not a correct position", coords[1]);
-                    action = input(">");
-                    continue;
-                },
-                Ok(y) => {
-                    if y > field.size.size_y || y <= 0 {
-                        println!("Y can only be from 1 to {}", field.size.size_y);
-                        action = input(">");
-                        continue;
-                    }
-                    y - 1
-                }
-            };
+        if pressed_keys.contains(&Keycode::Up) {
+            show_hint = false;
+            current_position.x -= 1;
 
-            let pos_to_reveal = Position { x, y };
-            
-            let player_lost = field.reveal_on_pos(pos_to_reveal, &mut Vec::new());
-            if player_lost {
+            if current_position.x < 0 {
+                current_position.x = 0;
+            }
+            draw(&term, &field, show_hint, current_position);
+
+        }
+        if pressed_keys.contains(&Keycode::Down) {
+            show_hint = false;
+            current_position.x += 1;
+
+            if current_position.x == field.size.size_x {
+                current_position.x = field.size.size_x - 1;
+            }
+            draw(&term, &field, show_hint, current_position);
+
+        }
+        if pressed_keys.contains(&Keycode::Left) {
+            show_hint = false;
+            current_position.y -= 1;
+
+            if current_position.y < 0 {
+                current_position.y = 0;
+            }
+            draw(&term, &field, show_hint, current_position);
+
+        }
+        if pressed_keys.contains(&Keycode::Right) {
+            show_hint = false;
+            current_position.y += 1;
+
+            if current_position.y == field.size.size_y {
+                current_position.y = field.size.size_y - 1;
+            }
+            draw(&term, &field, show_hint, current_position);
+        }
+        if pressed_keys.contains(&Keycode::M) {
+            show_hint = false;
+            field.toggle_mark(current_position);
+            draw(&term, &field, show_hint, current_position);
+        }
+        if pressed_keys.contains(&Keycode::Space) {
+            show_hint = false;
+            let player_lost = field.reveal_on_pos(current_position, &mut Vec::new());
+            if !player_lost {
+                draw(&term, &field, show_hint, current_position);
+            }
+            else {
                 clear_screen(&term);
+
                 let mut drawn_field = field.status_bar() + "\n";
-                drawn_field += &(field.draw() + "\n");
+                drawn_field += &(field.draw(current_position) + "\n");
                 drawn_field += "BOOM! You've lost!";
+                
                 print_to_center(drawn_field, true, true);
+
+
                 break;
             }
-        }
-        else if action.to_ascii_lowercase().contains("m") || action.to_ascii_lowercase().contains("mark") {
-            let coords: Vec<&str> = action.split(" ").collect();
-            let x = match coords[1].parse::<i32>() {
-                Err(_) => { 
-                    println!("{} is not a correct position", coords[1]);
-                    action = input(">");
-                    continue;
-                },
-                Ok(x) => {
-                    if x > field.size.size_x || x <= 0 {
-                        println!("X can only be from 1 to {}", field.size.size_x);
-                        action = input(">");
-                        continue;
-                    }
-                    x - 1
-                }
-            };
-
-            let y = match coords[2].parse::<i32>() {
-                Err(_) => { 
-                    println!("{} is not a correct position", coords[1]);
-                    action = input(">");
-                    continue;
-                },
-                Ok(y) => {
-                    if y > field.size.size_y || y <= 0 {
-                        println!("Y can only be from 1 to {}", field.size.size_y);
-                        action = input(">");
-                        continue;
-                    }
-                    y - 1
-                }
-            };
-
-            let pos_to_mark = Position { x, y };
             
-            field.toggle_mark(pos_to_mark);
         }
-        else if action.to_ascii_lowercase() == "help" {
-            clear_screen(&term);
-            let mut drawn_field = field.status_bar() + "\n";
-            drawn_field += &(field.draw() + "\n");
-            drawn_field += &field.help();
-            print_to_center(drawn_field, true, true);
-            
-            action = input(">");
-            continue;
+
+        if start.elapsed().as_millis() >= 1000 {
+            draw(&term, &field, show_hint, current_position);
+
+            start = Instant::now();
         }
-        clear_screen(&term);
-        let mut drawn_field = field.status_bar() + "\n";
-        drawn_field += &(field.draw() + "\n");
-
-        print_to_center(drawn_field, true, true);
-        
-        action = input(">");
-
     }
 }
