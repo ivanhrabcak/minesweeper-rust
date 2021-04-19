@@ -365,7 +365,7 @@ fn main() {
     let mut current_position = Position { x: field.size.size_x / 2, y: field.size.size_y / 2 };
     let mut drawn_field = field.status_bar() + "\n";
     drawn_field += &(field.draw(current_position) + "\n");
-    drawn_field += "Use the arrow keys to move around the field, SPACE to reveal an M to mark.";
+    drawn_field += "Use the arrow keys to move around the field, SPACE to reveal and M to mark.";
 
     
     print_to_center(drawn_field, true, true);
