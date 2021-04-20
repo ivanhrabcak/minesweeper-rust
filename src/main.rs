@@ -334,9 +334,9 @@ fn main() {
                                             .help("Seed for mine generation")
                                             .takes_value(true))
                                     .get_matches();
-    let height = get_field(&matches, "height", 10);
-    let width = get_field(&matches, "width", 10);
-    let size = Size { size_x: width, size_y: height };
+    let height = get_field(&matches, "field_height", 10);
+    let width = get_field(&matches, "field_width", 10);
+    let size = Size { size_x: height, size_y: width };
 
     let mines = get_field(&matches, "mines", 10);
     
